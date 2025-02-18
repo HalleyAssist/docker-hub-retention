@@ -78,11 +78,16 @@ async function dockerRegistryRetention() {
       const toDelete: DockerTag[] = [];
 
       const unlessImages: string[] = [];
-      for (const { match } of unlessConfig) {
-        const matchingTags = tags.filter((tag) => (match ? !!tag.name.match(match) : true));
-        for (const tag of matchingTags) {
-          unlessImages.push(...tag.images.map((i) => i.digest));
+      for (const match of unlessConfig) {
+        for (const tag of tags) {
+          if (tag.name.match(match)) {
+            unlessImages.push(...tag.images.map((i) => i.digest));
+          }
         }
+      }
+
+      if (unlessImages.length > 0) {
+        info(`found ${unlessImages.length} images to whitelist due to unless config (${unlessConfig.length} rules)`);
       }
 
       for (const { match, retention, minimum } of config) {
@@ -91,9 +96,18 @@ async function dockerRegistryRetention() {
         let matchingTags = tags.filter((tag) => (match ? !!tag.name.match(match) : true));
 
         // remove any matching tags where at-least one image is in the unless list
+        let foundUnless = 0;
         matchingTags = matchingTags.filter((tag) => {
-          return !tag.images.some((i) => unlessImages.includes(i.digest));
+          if (tag.images.some((i) => unlessImages.includes(i.digest))) {
+            foundUnless++;
+            return false;
+          }
+          return true;
         });
+
+        if (foundUnless > 0) {
+          info(`found ${foundUnless} tags that are excluded from deletion due to unless config`);
+        }
 
         // sort tags in decending order
         matchingTags.sort((a, b) => parseISO(b.tag_last_pushed).getTime() - parseISO(a.tag_last_pushed).getTime());
@@ -101,7 +115,7 @@ async function dockerRegistryRetention() {
         // if minimum is set remove the first n tags
         if (minimum) {
           const minimumTags = matchingTags.splice(0, Number(minimum));
-          info(`removing the first ${minimumTags.length} tags`);
+          info(`whitelisting the first ${minimumTags.length} tags`);
         }
 
         toDelete.push(
