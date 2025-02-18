@@ -35,8 +35,9 @@ async function dockerRegistryRetention() {
     const retention = getInput('retention', { required: false });
     const multiple = getInput('multiple', { required: false });
     const dryRun = getInput('dryrun', { required: false }) === 'true';
+    const minimum = getInput('minimum', { required: false });
 
-    const config: { match: string; retention: string }[] = [];
+    const config: { match: string; retention: string; minimum: string }[] = [];
 
     if (multiple) {
       const multipleConfig = parse(multiple);
@@ -51,7 +52,7 @@ async function dockerRegistryRetention() {
         }
       }
     } else {
-      config.push({ match, retention });
+      config.push({ match, retention, minimum });
     }
 
     info(`repository: ${repository}`);
@@ -64,19 +65,26 @@ async function dockerRegistryRetention() {
         await client.login(username, password);
       }
 
-      const tags = await client.getTags();
+      let tags = await client.getTags();
       const toDelete: DockerTag[] = [];
 
-      for (const { match, retention } of config) {
+      for (const { match, retention, minimum } of config) {
         const retentionDate = retentionToDate(retention);
 
+        const matchingTags = tags.filter((tag) => (match ? !!tag.name.match(match) : true));
+
+        // sort tags in decending order
+        matchingTags.sort((a, b) => parseISO(b.tag_last_pushed).getTime() - parseISO(a.tag_last_pushed).getTime());
+
+        // if minimum is set remove the first n tags
+        if (minimum) {
+          const minimumTags = matchingTags.splice(0, Number(minimum));
+          info(`removing the first ${minimumTags.length} tags`);
+        }
+
         toDelete.push(
-          ...tags.filter((tag) => {
-            return (
-              (match ? !!tag.name.match(match) : true) &&
-              parseISO(tag.tag_last_pushed) < retentionDate &&
-              parseISO(tag.tag_last_pulled) < retentionDate
-            );
+          ...matchingTags.filter((tag) => {
+            return parseISO(tag.tag_last_pushed) < retentionDate && parseISO(tag.tag_last_pulled) < retentionDate;
           }),
         );
       }
