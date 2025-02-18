@@ -34,6 +34,7 @@ async function dockerRegistryRetention() {
     const match = getInput('match', { required: false });
     const retention = getInput('retention', { required: false });
     const multiple = getInput('multiple', { required: false });
+    const unless = getInput('unless', { required: false });
     const dryRun = getInput('dryrun', { required: false }) === 'true';
     const minimum = getInput('minimum', { required: false });
 
@@ -55,6 +56,14 @@ async function dockerRegistryRetention() {
       config.push({ match, retention, minimum });
     }
 
+    let unlessConfig = [];
+    if (unless) {
+      unlessConfig = parse(unless);
+      if (!Array.isArray(unlessConfig)) {
+        throw new Error('unless config must be an array');
+      }
+    }
+
     info(`repository: ${repository}`);
     info(`config: ${JSON.stringify(config)}`);
 
@@ -68,10 +77,23 @@ async function dockerRegistryRetention() {
       let tags = await client.getTags();
       const toDelete: DockerTag[] = [];
 
+      const unlessImages: string[] = [];
+      for (const { match } of unlessConfig) {
+        const matchingTags = tags.filter((tag) => (match ? !!tag.name.match(match) : true));
+        for (const tag of matchingTags) {
+          unlessImages.push(...tag.images.map((i) => i.digest));
+        }
+      }
+
       for (const { match, retention, minimum } of config) {
         const retentionDate = retentionToDate(retention);
 
-        const matchingTags = tags.filter((tag) => (match ? !!tag.name.match(match) : true));
+        let matchingTags = tags.filter((tag) => (match ? !!tag.name.match(match) : true));
+
+        // remove any matching tags where at-least one image is in the unless list
+        matchingTags = matchingTags.filter((tag) => {
+          return !tag.images.some((i) => unlessImages.includes(i.digest));
+        });
 
         // sort tags in decending order
         matchingTags.sort((a, b) => parseISO(b.tag_last_pushed).getTime() - parseISO(a.tag_last_pushed).getTime());

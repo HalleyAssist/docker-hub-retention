@@ -24,6 +24,9 @@ inputs:
   multiple:
     description: match / retention for multiple tags. yaml formatted string with match / retention as array
     required: false
+  unless:
+    description: list of tags which should not be deleted (will also keep any other tags of that image)
+    required: false
   dryrun:
     description: only print tags which would be deleted
     required: false
